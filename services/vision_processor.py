@@ -1,8 +1,8 @@
 import os
 import io
 import json
-from google import genai
-from google.genai import types
+import base64
+from openai import OpenAI
 from PIL import Image
 from dotenv import load_dotenv
 
@@ -10,23 +10,33 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- CRITICAL CONFIG ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if not GEMINI_API_KEY:
-    raise ValueError("❌ GEMINI_API_KEY not found! Please Reload Window (Ctrl+Shift+P > Reload Window)")
+if not OPENAI_API_KEY:
+    raise ValueError("❌ OPENAI_API_KEY not found! Please Reload Window (Ctrl+Shift+P > Reload Window) or check Secrets.")
 
-# Initialize the NEW Client (v1.0+)
-client = genai.Client(api_key=GEMINI_API_KEY)
-# -----------------------
+# Initialize OpenAI Client
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Use Gemini 2.5 Flash (Stable) or 3.0 Flash (Preview)
-MODEL_NAME = "gemini-2.0-flash" 
+# Use GPT-4o Mini (Cost-effective Vision model)
+MODEL_NAME = "gpt-4o-mini"
+
+def encode_image(image: Image.Image) -> str:
+    """Encodes a PIL Image to a base64 string for OpenAI."""
+    buffered = io.BytesIO()
+    # Resize if too massive to save tokens/bandwidth (optional but recommended)
+    # image.thumbnail((2048, 2048)) 
+    image.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 def analyze_slide_image(image: Image.Image) -> dict:
     """
-    Sends a slide image to Gemini and receives structured, validated semantic data.
+    Sends a slide image to GPT-4o-mini and receives structured JSON data.
     """
     try:
+        # Convert image to base64
+        base64_image = encode_image(image)
+
         prompt = """
         Analyze this slide image and return a JSON object that strictly follows this schema:
         {
@@ -49,18 +59,30 @@ def analyze_slide_image(image: Image.Image) -> dict:
         - If a chart has text labels inside it, treat the whole thing as a Figure.
         - Return ONLY the JSON object.
         """
-        
-        # New SDK syntax for sending images
-        response = client.models.generate_content(
+
+        response = client.chat.completions.create(
             model=MODEL_NAME,
-            contents=[prompt, image],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json" # Enforces JSON output automatically
-            )
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{base64_image}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            response_format={"type": "json_object"}, # Forces valid JSON
+            max_tokens=4096,
         )
-        
+
         # Parse the JSON response
-        data = json.loads(response.text)
+        content = response.choices[0].message.content
+        data = json.loads(content)
         return data
 
     except Exception as e:
