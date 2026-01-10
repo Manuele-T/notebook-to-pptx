@@ -1,34 +1,32 @@
 import os
 import io
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from PIL import Image
 from dotenv import load_dotenv
 
-# Load environment variables from .env (if present)
+# Load environment variables
 load_dotenv()
 
-# --- CRITICAL FIX: Explicitly fetch and configure the key ---
+# --- CRITICAL CONFIG ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-    # This raises a clear error in your logs if the key is missing
-    raise ValueError("❌ GEMINI_API_KEY not found in environment variables! Please add it to your Codespace Secrets.")
+    raise ValueError("❌ GEMINI_API_KEY not found! Please Reload Window (Ctrl+Shift+P > Reload Window)")
 
-# Configure the Gemini API with the specific key
-genai.configure(api_key=GEMINI_API_KEY)
-# ------------------------------------------------------------
+# Initialize the NEW Client (v1.0+)
+client = genai.Client(api_key=GEMINI_API_KEY)
+# -----------------------
 
-# Use Gemini 3.0 Flash (Preview)
-MODEL_NAME = "gemini-3.0-flash"
+# Use Gemini 2.5 Flash (Stable) or 3.0 Flash (Preview)
+MODEL_NAME = "gemini-2.0-flash" 
 
 def analyze_slide_image(image: Image.Image) -> dict:
     """
     Sends a slide image to Gemini and receives structured, validated semantic data.
     """
     try:
-        model = genai.GenerativeModel(MODEL_NAME)
-        
         prompt = """
         Analyze this slide image and return a JSON object that strictly follows this schema:
         {
@@ -52,24 +50,21 @@ def analyze_slide_image(image: Image.Image) -> dict:
         - Return ONLY the JSON object.
         """
         
-        # Send the image and prompt to Gemini
-        response = model.generate_content([prompt, image])
+        # New SDK syntax for sending images
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[prompt, image],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json" # Enforces JSON output automatically
+            )
+        )
         
-        # Extract JSON from the response text
-        text = response.text.strip()
-        
-        # Clean up Markdown code blocks if present
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-            
-        data = json.loads(text)
+        # Parse the JSON response
+        data = json.loads(response.text)
         return data
 
     except Exception as e:
         print(f"Error analyzing slide: {e}")
-        # Fail gracefully with a default structure if the AI output is malformed or API fails
         return {
             "layout_type": "mixed_freeform",
             "title": "Error Processing Slide",
