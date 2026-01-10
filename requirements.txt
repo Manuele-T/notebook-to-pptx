@@ -3,6 +3,6 @@ uvicorn
 python-multipart
 python-pptx
 pdf2image
-google-genai
+openai
 python-dotenv
 Pillow
