@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Thread pool for parallel processing (limit to 5 concurrent API calls to avoid rate limits)
-executor = ThreadPoolExecutor(max_workers=5)
+# Thread pool for parallel processing (limit to 3 concurrent API calls to avoid rate limits)
+executor = ThreadPoolExecutor(max_workers=3)
 
 # Mount static files for the UI
 app.mount("/static", StaticFiles(directory="static"), name="static")
