@@ -6,6 +6,11 @@ from openai import OpenAI
 from PIL import Image
 from dotenv import load_dotenv
 
+import logging
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+
 # Load environment variables
 load_dotenv()
 
@@ -13,6 +18,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
+    logger.error("OPENAI_API_KEY not found in environment variables")
     raise ValueError("❌ OPENAI_API_KEY not found! Please Reload Window (Ctrl+Shift+P > Reload Window) or check Secrets.")
 
 # Initialize OpenAI Client
@@ -34,6 +40,7 @@ def analyze_slide_image(image: Image.Image) -> dict:
     Sends a slide image to GPT-4o-mini and receives structured JSON data.
     """
     try:
+        logger.info("Encoding image for analysis...")
         # Convert image to base64
         base64_image = encode_image(image)
 
@@ -60,6 +67,7 @@ def analyze_slide_image(image: Image.Image) -> dict:
         - Return ONLY the JSON object.
         """
 
+        logger.info(f"Sending request to OpenAI model: {MODEL_NAME}")
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
@@ -82,11 +90,16 @@ def analyze_slide_image(image: Image.Image) -> dict:
 
         # Parse the JSON response
         content = response.choices[0].message.content
+        logger.info(f"Raw OpenAI response content: {content[:500]}...")
         data = json.loads(content)
+        logger.info(f"Parsed data keys: {list(data.keys())}")
+        logger.info(f"Parsed title: {data.get('title', 'NO TITLE')}")
+        logger.info(f"Parsed body_text: {data.get('body_text', [])}")
         return data
 
     except Exception as e:
-        print(f"Error analyzing slide: {e}")
+        logger.error(f"Error analyzing slide: {e}", exc_info=True)
+        # print(f"Error analyzing slide: {e}") # removed duplicate print
         return {
             "layout_type": "mixed_freeform",
             "title": "Error Processing Slide",
@@ -130,7 +143,7 @@ def crop_figures_from_slide(original_image: Image.Image, figures: list[dict]) ->
             fig_copy["image_bytes"] = img_byte_arr.read()
             processed_figures.append(fig_copy)
         except Exception as e:
-            print(f"Error cropping figure: {e}")
+            logger.error(f"Error cropping figure: {e}", exc_info=True)
             continue
         
     return processed_figures

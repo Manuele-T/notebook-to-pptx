@@ -1,11 +1,15 @@
+import logging
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from io import BytesIO
+
+logger = logging.getLogger(__name__)
 
 def generate_pptx(slides_data: list[dict]) -> BytesIO:
     """
     Rebuilds each slide in PPTX format using layout intent, editable text boxes, and positioned images.
     """
+    logger.info(f"Starting PPTX generation with {len(slides_data)} slides")
     prs = Presentation()
     
     # Mapping our layout_type to python-pptx standard layouts
@@ -21,17 +25,22 @@ def generate_pptx(slides_data: list[dict]) -> BytesIO:
         "mixed_freeform": 6
     }
 
-    for slide_data in slides_data:
+    for idx, slide_data in enumerate(slides_data):
+        logger.info(f"Building slide {idx+1}: layout_type={slide_data.get('layout_type')}, title={slide_data.get('title', '')[:50]}")
         layout_idx = layout_mapping.get(slide_data.get("layout_type"), 6)
         slide_layout = prs.slide_layouts[layout_idx]
         slide = prs.slides.add_slide(slide_layout)
         
         # Set Title
+        title_text = slide_data.get("title", "")
+        logger.info(f"  Setting title: '{title_text}'")
         if slide.shapes.title:
-            slide.shapes.title.text = slide_data.get("title", "")
+            slide.shapes.title.text = title_text
             
         # Set Body Text
-        body_text = "\n".join(slide_data.get("body_text", []))
+        body_text_list = slide_data.get("body_text", [])
+        body_text = "\n".join(body_text_list)
+        logger.info(f"  Body text items: {len(body_text_list)}, preview: '{body_text[:100] if body_text else 'EMPTY'}'")
         
         # Determine where to put the body text based on layout
         if layout_idx == 1: # Title and Content
