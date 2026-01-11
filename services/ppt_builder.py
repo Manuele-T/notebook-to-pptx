@@ -1,125 +1,162 @@
 import logging
 from pptx import Presentation
-from pptx.util import Inches, Pt
+from pptx.util import Inches, Pt, Emu
 from pptx.enum.text import PP_ALIGN
 from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
+
 def generate_pptx(slides_data: list[dict]) -> BytesIO:
     """
-    Rebuilds each slide in PPTX format using layout intent, editable text boxes, and positioned images.
+    Rebuilds each slide in PPTX format with proper text fitting and image placement.
     """
     logger.info(f"Starting PPTX generation with {len(slides_data)} slides")
     prs = Presentation()
-    
-    # Standard PPTX Slide Dimensions: 10 inches x 7.5 inches
-    SLIDE_WIDTH = Inches(10)
-    SLIDE_HEIGHT = Inches(7.5)
-
-    # Layout Mapping (0: Title, 1: Title/Content, 5: Title Only, 6: Blank)
-    layout_mapping = {
-        "title_only": 5,
-        "title_and_content": 1,
-        "two_column": 3, # Two Content
-        "diagram_heavy": 6, # Blank (We will build manually)
-        "mixed_freeform": 6
-    }
 
     for idx, slide_data in enumerate(slides_data):
         l_type = slide_data.get("layout_type", "title_and_content")
+        title_text = slide_data.get("title", "")
+        body_text_list = slide_data.get("body_text", [])
+        figures = slide_data.get("figures", [])
+        speaker_notes = slide_data.get("speaker_notes", "")
+        
         logger.info(f"Building slide {idx+1}: {l_type}")
         
-        layout_idx = layout_mapping.get(l_type, 1)
-        slide_layout = prs.slide_layouts[layout_idx]
+        # Always use blank layout for maximum control
+        slide_layout = prs.slide_layouts[6]  # Blank
         slide = prs.slides.add_slide(slide_layout)
         
-        # --- TITLE HANDLING ---
-        title_text = slide_data.get("title", "")
-        if slide.shapes.title:
-            slide.shapes.title.text = title_text
-        elif l_type in ["diagram_heavy", "mixed_freeform"] and title_text:
-            # Manually add title if Blank layout
-            title_box = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(9), Inches(1))
+        has_figures = len(figures) > 0
+        has_body = len(body_text_list) > 0
+        
+        # --- TITLE (always at top) ---
+        if title_text:
+            title_box = slide.shapes.add_textbox(
+                Inches(0.5), Inches(0.3), 
+                Inches(9), Inches(0.8)
+            )
             tf = title_box.text_frame
-            tf.text = title_text
-            tf.paragraphs[0].font.size = Pt(32)
-            tf.paragraphs[0].font.bold = True
-            tf.paragraphs[0].alignment = PP_ALIGN.CENTER
-
-        # --- BODY TEXT HANDLING ---
-        body_text_list = slide_data.get("body_text", [])
-        body_text = "\n".join(body_text_list)
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = title_text
+            p.font.size = Pt(28)
+            p.font.bold = True
+            p.alignment = PP_ALIGN.LEFT
         
-        # If standard layout, use placeholder
-        if layout_idx == 1 and body_text: # Title and Content
-            if len(slide.placeholders) > 1:
-                slide.placeholders[1].text = body_text
-                
-        # If Two Column (Layout 3)
-        elif layout_idx == 3:
-             # Put text on left, leave right for image (usually)
-             if len(slide.placeholders) > 1:
-                 slide.placeholders[1].text = body_text
-
-        # If Manual Layout (Diagram Heavy / Freeform)
-        elif layout_idx == 6 and body_text:
-            # Add a small text box at the bottom or side if text exists
-            txBox = slide.shapes.add_textbox(Inches(0.5), Inches(6.5), Inches(9), Inches(1))
-            tf = txBox.text_frame
-            tf.text = body_text
-            tf.paragraphs[0].font.size = Pt(12)
-
-# --- IMAGE HANDLING ---
-        figures = slide_data.get("figures", [])
-        num_figures = len(figures)
+        # --- CONTENT LAYOUT LOGIC ---
+        if l_type == "title_only":
+            if has_figures:
+                _add_centered_image(slide, figures[0], top=1.5, max_width=8, max_height=5.5)
         
-        for i, figure in enumerate(figures):
-            if "image_bytes" in figure:
-                image_stream = BytesIO(figure["image_bytes"])
-                
-                # Dynamic Positioning
-                left = Inches(1)
-                top = Inches(2)
-                width = Inches(8) 
-
-                # Special Logic: 2 Figures in Two Column Mode (The "Hammer vs Blueprint" Fix)
-                if l_type == "two_column" and num_figures == 2:
-                    width = Inches(3.5)
-                    top = Inches(2)
-                    if i == 0:
-                        left = Inches(1) # Left side
-                    else:
-                        left = Inches(5.5) # Right side
-                    slide.shapes.add_picture(image_stream, left, top, width=width)
-
-                # Special Logic: Diagram Heavy
-                elif l_type == "diagram_heavy":
-                    left = Inches(0.5)
-                    top = Inches(1.5)
-                    width = Inches(9)
-                    slide.shapes.add_picture(image_stream, left, top, width=width)
-                
-                # Standard: Use AI coordinates if available
-                else:
-                    box = figure.get("box_2d")
-                    if box and len(box) == 4:
-                        ymin, xmin, ymax, xmax = box
-                        left = Inches(xmin * 10 / 1000)
-                        top = Inches(ymin * 7.5 / 1000)
-                        width = Inches((xmax - xmin) * 10 / 1000)
-                        slide.shapes.add_picture(image_stream, left, top, width=width)
-                    else:
-                        # Fallback
-                        slide.shapes.add_picture(image_stream, left, top, width=width)
-
+        elif l_type == "two_column":
+            if has_figures and len(figures) >= 2:
+                # Two figures side by side
+                _add_image_at(slide, figures[0], left=0.5, top=1.5, max_width=4.2, max_height=4)
+                _add_image_at(slide, figures[1], left=5.3, top=1.5, max_width=4.2, max_height=4)
+                if has_body:
+                    _add_body_text(slide, body_text_list, left=0.5, top=5.7, width=9, height=1.5, font_size=11)
+            elif has_figures:
+                _add_body_text(slide, body_text_list, left=0.5, top=1.3, width=4.5, height=5.5, font_size=12)
+                _add_image_at(slide, figures[0], left=5.2, top=1.5, max_width=4.3, max_height=5)
+            else:
+                _add_body_text(slide, body_text_list, left=0.5, top=1.3, width=9, height=5.8, font_size=13)
+        
+        elif l_type == "diagram_heavy":
+            if has_figures:
+                _add_centered_image(slide, figures[0], top=1.3, max_width=9, max_height=5.2)
+            if has_body:
+                combined = " | ".join(body_text_list)
+                _add_body_text(slide, [combined], left=0.5, top=6.5, width=9, height=0.8, font_size=10)
+        
+        else:  # title_and_content, mixed_freeform, or default
+            if has_figures and has_body:
+                _add_body_text(slide, body_text_list, left=0.5, top=1.3, width=5.5, height=5.8, font_size=13)
+                _add_image_at(slide, figures[0], left=6.2, top=1.5, max_width=3.5, max_height=5)
+            elif has_figures:
+                _add_centered_image(slide, figures[0], top=1.5, max_width=8, max_height=5.5)
+            elif has_body:
+                _add_body_text(slide, body_text_list, left=0.5, top=1.3, width=9, height=5.8, font_size=14)
+        
         # --- SPEAKER NOTES ---
-        if slide_data.get("speaker_notes"):
+        if speaker_notes:
             notes_slide = slide.notes_slide
-            notes_slide.notes_text_frame.text = slide_data.get("speaker_notes")
+            notes_slide.notes_text_frame.text = speaker_notes
 
-    # Save to buffer
     pptx_buffer = BytesIO()
     prs.save(pptx_buffer)
     pptx_buffer.seek(0)
+    logger.info("PPTX generation complete")
     return pptx_buffer
+
+
+def _add_body_text(slide, items: list[str], left: float, top: float, 
+                   width: float, height: float, font_size: int = 14):
+    """Add a text box with content that fits within bounds."""
+    if not items:
+        return
+    
+    text_box = slide.shapes.add_textbox(
+        Inches(left), Inches(top),
+        Inches(width), Inches(height)
+    )
+    tf = text_box.text_frame
+    tf.word_wrap = True
+    
+    # Adjust font size based on content length
+    total_chars = sum(len(item) for item in items)
+    if total_chars > 1000:
+        font_size = min(font_size, 10)
+    elif total_chars > 600:
+        font_size = min(font_size, 11)
+    elif total_chars > 400:
+        font_size = min(font_size, 12)
+    
+    for i, item in enumerate(items):
+        if i == 0:
+            p = tf.paragraphs[0]
+        else:
+            p = tf.add_paragraph()
+        
+        p.text = item.strip()
+        p.font.size = Pt(font_size)
+        p.space_after = Pt(4)
+        p.space_before = Pt(2)
+
+
+def _add_centered_image(slide, figure: dict, top: float, max_width: float, max_height: float):
+    """Add a centered image that fits within bounds."""
+    if "image_bytes" not in figure:
+        return
+    
+    image_stream = BytesIO(figure["image_bytes"])
+    left = (10 - max_width) / 2
+    
+    try:
+        pic = slide.shapes.add_picture(image_stream, Inches(left), Inches(top), width=Inches(max_width))
+        
+        if pic.height.inches > max_height:
+            scale = max_height / pic.height.inches
+            pic.width = Emu(int(pic.width * scale))
+            pic.height = Emu(int(pic.height * scale))
+            pic.left = Inches((10 - pic.width.inches) / 2)
+    except Exception as e:
+        logger.error(f"Error adding image: {e}")
+
+
+def _add_image_at(slide, figure: dict, left: float, top: float, max_width: float, max_height: float):
+    """Add an image at a specific position."""
+    if "image_bytes" not in figure:
+        return
+    
+    image_stream = BytesIO(figure["image_bytes"])
+    
+    try:
+        pic = slide.shapes.add_picture(image_stream, Inches(left), Inches(top), width=Inches(max_width))
+        
+        if pic.height.inches > max_height:
+            scale = max_height / pic.height.inches
+            pic.width = Emu(int(pic.width * scale))
+            pic.height = Emu(int(pic.height * scale))
+    except Exception as e:
+        logger.error(f"Error adding image: {e}")
